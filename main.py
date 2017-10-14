@@ -1,6 +1,6 @@
 from peer_ui import Ui_MainWindow
 from PyQt5 import QtCore, QtWidgets, QtGui
-from MessageCenter import Peer, MessageCenter
+from MessageCenter import MessageCenter
 import sys
 
 class MyForm(QtWidgets.QMainWindow):
@@ -16,13 +16,13 @@ class MyForm(QtWidgets.QMainWindow):
         myname = self.ui.lineEdit_id.text()
         host_ip = self.ui.lineEdit_ip.text()
         host_port = int(self.ui.lineEdit_port.text())
-        self.p = Peer(5, host_port, myname, host_ip)
+        self.p = MessageCenter(5, host_port, myname, host_ip)
         self.p.start()
 
     def send_info(self):
         send_ip = self.ui.lineEdit_to_ip.text()
         send_port = int(self.ui.lineEdit_to_port.text())
-        self.p.connectandsend(send_ip, send_port, 'info', 'I am good.', )
+        self.p.sendNewMessage(send_ip, send_port, 'info', 'I am good.', )
 
 
 

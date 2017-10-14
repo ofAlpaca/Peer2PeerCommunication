@@ -1,22 +1,23 @@
 import socket
 import threading
 import traceback
-import struct
+import queue
 import pickle
 
-class Peer(threading.Thread):
+class MessageCenter(threading.Thread):
     def __init__(self, max_cons, sv_port, sv_id=None, sv_host=None):
         threading.Thread.__init__(self, daemon=True)
 
+        self._qMessageQueue = queue.Queue()
         self.debug = True
         self.debug_msg = []
         self.max_cons = int(max_cons)
-        self.sv_port = int(sv_port)
-        self.sv_host = sv_host
+        self._sLocalHostPort = int(sv_port)
+        self._sLocalHostIP = sv_host
         if sv_id:
-            self.sv_id = sv_id
+            self._sLocalHostName = sv_id
         else:
-            self.sv_id = '{}:{}'.format(sv_host, sv_port)
+            self._sLocalHostName = '{}:{}'.format(sv_host, sv_port)
 
         self.con_list = {}
         # use to shutdown server.
@@ -26,7 +27,7 @@ class Peer(threading.Thread):
         s = self.makeserversocket()
         # set connection timeout for 2 seconds.
         # s.settimeout(5)
-        self.__debug('Server start: {} {}:{}'.format(self.sv_id, self.sv_host, self.sv_port))
+        self.__debug('Server start: {} {}:{}'.format(self._sLocalHostName, self._sLocalHostIP, self._sLocalHostPort))
 
         while not self.shutdown:
             try:
@@ -57,7 +58,7 @@ class Peer(threading.Thread):
         # set the socket port can be reused.
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # prepare the socket and port.
-        s.bind((self.sv_host, self.sv_port))
+        s.bind((self._sLocalHostIP, self._sLocalHostPort))
         # start listening the socket and allow the 'backlog' number of connection.
         s.listen(backlog)
         return s
@@ -66,34 +67,43 @@ class Peer(threading.Thread):
         # get the ip and port number of client(peer) side .
         host, port = clientsocket.getpeername()
         # create a message center to receive and reply to the connection.
-        msgconn = MessageCenter(None, host, port, clientsocket)
+        msgconn = ConnectionPort(None, host, port, clientsocket)
         try:
-            newmsg = msgconn.getNewMessage()
-            msgconn.sendNewMessage('ACK', 'I know you are good.')
-            self.__debug('{} receive msg: {}'.format(self.sv_id, newmsg))
+            newmsg = msgconn.recv_data()
+            msgconn.send_data('ACK', 'I know you are good.')
+            self.__debug('{} receive msg: {}'.format(self._sLocalHostName, newmsg))
         except :
             if self.debug:
                 traceback.print_exc()
+        # saving msg.
+        self._qMessageQueue.put(newmsg)
+
+        self.__debug('{} now have :'.format(self._sLocalHostName))
+        print(list(self._qMessageQueue.queue))
 
         self.__debug('Disconnecting' + str(clientsocket.getpeername()))
         msgconn.close()
 
-    def connectandsend(self, host, port, msgtype, msgdata, pid=None ):
+    def getNewMessage(self):
+        # pop msg once a time.
+        return self._qMessageQueue.get()
+
+    def sendNewMessage(self, host, port, msgtype, msgdata, pid=None ):
         # send msg to a host and get its reply.
         msgreply = []
         try:
             # make connection to the the server side.
             if pid == None:
-                pid = self.sv_id
-            msgconn = MessageCenter(pid, host, port)
-            msgconn.sendNewMessage(msgtype, msgdata)
+                pid = self._sLocalHostName
+            msgconn = ConnectionPort(pid, host, port)
+            msgconn.send_data(msgtype, msgdata)
             self.__debug('{} sent: {}'.format(pid, msgdata))
 
-            replymsg = msgconn.getNewMessage()
+            replymsg = msgconn.recv_data()
             while replymsg != None:
                 msgreply.append(replymsg)
                 self.__debug('{} got reply: {}'.format(pid, str(msgreply)))
-                replymsg = msgconn.getNewMessage()
+                replymsg = msgconn.recv_data()
         except KeyboardInterrupt:
             raise
         except:
@@ -108,7 +118,7 @@ class Peer(threading.Thread):
             print(msg)
 
 
-class MessageCenter():
+class ConnectionPort():
     def __init__(self, pid, host, port, sock=None):
         self.debug = True
         if not sock:
@@ -118,10 +128,6 @@ class MessageCenter():
             self.s = sock
         
         # self.sockdata = self.s.makefile('rw', 0)
-        self._qMessageQueue = []
-        self._sLocalHostName = pid
-        self._sLocalHostIP = host
-        self._sLocalHostPort = port
 
     def __makemsg(self, msgtype, msgdata):
         # make the data into pickle format.
@@ -133,7 +139,7 @@ class MessageCenter():
         msg = pickle.loads(recvmsg)
         return msg
 
-    def getNewMessage(self):
+    def recv_data(self):
         try:
             msg = self.__readmsg(self.s.recv(4096))
         except KeyboardInterrupt:
@@ -147,7 +153,7 @@ class MessageCenter():
             return None
         return msg
             
-    def sendNewMessage(self, msgtype, msgdata):
+    def send_data(self, msgtype, msgdata):
         try:
             msg = self.__makemsg(msgtype, msgdata)
             self.s.send(msg)
